@@ -1,0 +1,7 @@
+.git
+.github
+.data
+EXPERIMENT_NOTES.md
+node_modules
+npm-debug.log
+.DS_Store
