@@ -383,6 +383,22 @@
 
           <div class="admin-section-title">
             <span>3</span>
+            <strong>Zahlungslink</strong>
+            <small>Alle Unlock-, Chat-, Call- und Paket-Buttons öffnen diesen Zahlungslink.</small>
+          </div>
+
+          <label class="admin-wide">
+            <span>Payment URL</span>
+            <input type="url" inputmode="url" data-admin-input="paymentUrl" placeholder="https://buy.stripe.com/..." />
+            <small>Nur sichere https:// Links werden live übernommen.</small>
+          </label>
+
+          <div class="admin-actions admin-actions-payment">
+            <button type="button" data-admin-save-payment-link>Zahlungslink speichern</button>
+          </div>
+
+          <div class="admin-section-title">
+            <span>4</span>
             <strong>Speichern & Link</strong>
             <small>Hauptlink ist kurz. Link mit Einstellungen übernimmt Timer und Plätze direkt im Link.</small>
           </div>
@@ -401,6 +417,6 @@
 
     <div class="toast" data-toast role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=locked-button-copy" defer></script>
+    <script src="app.js?v=payment-link-admin" defer></script>
   </body>
 </html>

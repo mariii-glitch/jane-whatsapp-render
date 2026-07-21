@@ -18,6 +18,7 @@ const DEFAULT_CONFIG = Object.freeze({
 const CONFIG = { ...DEFAULT_CONFIG };
 const CAMPAIGN_PARAM = "cfg";
 const ADMIN_STORAGE_KEY = "janeTimerAdminRules";
+const ADMIN_SETTINGS_STORAGE_KEY = "janePaymentSettings";
 const ADMIN_PASSWORD = "123s";
 const TELEGRAM_WAITLIST_URL = "https://t.me/+df8nvcSFeAM0MDBk";
 const CONFIG_API_ENDPOINT = "/api/config";
@@ -62,6 +63,7 @@ const adminCopy = document.querySelector("[data-admin-copy]");
 const adminCopyHome = document.querySelector("[data-admin-copy-home]");
 const adminApplyClean = document.querySelector("[data-admin-apply-clean]");
 const adminApplyLive = document.querySelector("[data-admin-apply-live]");
+const adminSavePaymentLink = document.querySelector("[data-admin-save-payment-link]");
 const adminReset = document.querySelector("[data-admin-reset]");
 const adminLinkOutput = document.querySelector("[data-admin-link]");
 const adminStatus = document.querySelector("[data-admin-status]");
@@ -72,6 +74,7 @@ const adminInputs = {
   openSlots: document.querySelector('[data-admin-input="openSlots"]'),
   totalSlots: document.querySelector('[data-admin-input="totalSlots"]'),
   timerEpoch: document.querySelector('[data-admin-input="timerEpoch"]'),
+  paymentUrl: document.querySelector('[data-admin-input="paymentUrl"]'),
 };
 const normalizedPath = window.location.pathname.replace(/\/+$/, "");
 const isAdminMode =
@@ -103,8 +106,21 @@ function showToast(message) {
   }, 3600);
 }
 
+function normalizePaymentUrl(value) {
+  const candidate = String(value || "").trim();
+  if (!candidate) return "";
+
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "https:") return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
 function isConfiguredUnlockUrl(url) {
-  return /^https:\/\/buy\.stripe\.com\/.+/i.test(url);
+  return Boolean(normalizePaymentUrl(url));
 }
 
 function clampNumber(value, min, max) {
@@ -136,6 +152,17 @@ function normalizeTimerRules(rawRules) {
     openSlots,
     totalSlots,
     manualLock,
+  };
+}
+
+function normalizeSettings(rawSettings) {
+  if (!rawSettings || typeof rawSettings !== "object") return null;
+
+  const unlockUrl = normalizePaymentUrl(rawSettings.unlockUrl);
+  if (!unlockUrl) return null;
+
+  return {
+    unlockUrl,
   };
 }
 
@@ -180,6 +207,27 @@ function storeAdminRules(rules) {
   return true;
 }
 
+function readStoredAdminSettings() {
+  try {
+    return normalizeSettings(JSON.parse(window.localStorage.getItem(ADMIN_SETTINGS_STORAGE_KEY)));
+  } catch {
+    return null;
+  }
+}
+
+function storeAdminSettings(settings) {
+  const normalizedSettings = normalizeSettings(settings);
+  if (!normalizedSettings) return false;
+
+  try {
+    window.localStorage.setItem(ADMIN_SETTINGS_STORAGE_KEY, JSON.stringify(normalizedSettings));
+  } catch {
+    return false;
+  }
+
+  return true;
+}
+
 function getCurrentTimerRules() {
   return {
     offerDurationMs: CONFIG.offerDurationMs,
@@ -188,6 +236,12 @@ function getCurrentTimerRules() {
     openSlots: CONFIG.openSlots,
     totalSlots: CONFIG.totalSlots,
     manualLock: CONFIG.manualLock,
+  };
+}
+
+function getCurrentSettings() {
+  return {
+    unlockUrl: CONFIG.unlockUrl,
   };
 }
 
@@ -211,6 +265,12 @@ function readAdminFormRules(overrides = {}) {
     totalSlots: Number(adminInputs.totalSlots?.value),
     manualLock: CONFIG.manualLock,
     ...overrides,
+  });
+}
+
+function readAdminFormSettings() {
+  return normalizeSettings({
+    unlockUrl: adminInputs.paymentUrl?.value,
   });
 }
 
@@ -262,14 +322,21 @@ async function fetchConfigApi(path = CONFIG_API_ENDPOINT, options = {}) {
   }
 }
 
-async function readGlobalRules() {
+async function readGlobalConfig() {
   const payload = await fetchConfigApi();
-  return normalizeTimerRules(payload?.rules || payload);
+  if (!payload) return null;
+
+  return {
+    rules: normalizeTimerRules(payload.rules || payload),
+    settings: normalizeSettings(payload.settings || payload),
+  };
 }
 
-async function publishGlobalRules(rules) {
+async function publishGlobalConfig(rules = getCurrentTimerRules(), settings = getCurrentSettings()) {
   const normalizedRules = normalizeTimerRules(rules);
-  if (!normalizedRules) return { saved: false, reason: "invalid" };
+  const normalizedSettings = normalizeSettings(settings);
+  if (!normalizedRules) return { saved: false, reason: "invalid_rules" };
+  if (!normalizedSettings) return { saved: false, reason: "invalid_payment_link" };
 
   const payload = await fetchConfigApi(CONFIG_API_ENDPOINT, {
     method: "POST",
@@ -279,13 +346,19 @@ async function publishGlobalRules(rules) {
     body: JSON.stringify({
       password: adminSessionPassword || ADMIN_PASSWORD,
       rules: normalizedRules,
+      settings: normalizedSettings,
     }),
   });
 
   const savedRules = normalizeTimerRules(payload?.rules);
-  if (!savedRules) return { saved: false, reason: payload?.error || "api-unavailable" };
+  const savedSettings = normalizeSettings(payload?.settings);
+  if (!savedRules || !savedSettings) return { saved: false, reason: payload?.error || "api-unavailable" };
 
-  return { saved: true, rules: savedRules };
+  return { saved: true, rules: savedRules, settings: savedSettings };
+}
+
+async function publishGlobalRules(rules) {
+  return publishGlobalConfig(rules, getCurrentSettings());
 }
 
 function setAdminStatus(message) {
@@ -313,6 +386,9 @@ function updateAdminForm() {
   adminInputs.openSlots.value = CONFIG.openSlots;
   adminInputs.totalSlots.value = CONFIG.totalSlots;
   adminInputs.timerEpoch.value = toLocalDateTimeValue(CONFIG.timerEpochMs);
+  if (adminInputs.paymentUrl) {
+    adminInputs.paymentUrl.value = CONFIG.unlockUrl;
+  }
   updateAdminModeStatus();
   updateGeneratedLink();
 }
@@ -336,6 +412,17 @@ function applyTimerRules(rules) {
   return true;
 }
 
+function applySettings(settings) {
+  const normalizedSettings = normalizeSettings(settings);
+  if (!normalizedSettings) return false;
+
+  Object.assign(CONFIG, normalizedSettings);
+  if (adminInputs.paymentUrl) {
+    adminInputs.paymentUrl.value = CONFIG.unlockUrl;
+  }
+  return true;
+}
+
 function applyAndStoreTimerRules(rules, message) {
   if (!applyTimerRules(rules)) {
     setAdminStatus("Bitte gültige Werte eintragen.");
@@ -347,15 +434,24 @@ function applyAndStoreTimerRules(rules, message) {
   return true;
 }
 
-async function applyStoreAndPublishTimerRules(rules, liveMessage, fallbackMessage) {
+async function applyStoreAndPublishTimerRules(rules, liveMessage, fallbackMessage, settings = getCurrentSettings()) {
   if (!applyAndStoreTimerRules(rules, "Speichere live...")) {
     return false;
   }
 
-  const result = await publishGlobalRules(getCurrentTimerRules());
+  if (!applySettings(settings)) {
+    setAdminStatus("Bitte gültigen Zahlungslink mit https:// eintragen.");
+    return false;
+  }
+
+  storeAdminSettings(getCurrentSettings());
+
+  const result = await publishGlobalConfig(getCurrentTimerRules(), getCurrentSettings());
   if (result.saved) {
     applyTimerRules(result.rules);
+    applySettings(result.settings);
     storeAdminRules(result.rules);
+    storeAdminSettings(result.settings);
     setAdminStatus(liveMessage);
     return true;
   }
@@ -514,10 +610,17 @@ async function applyRulesAndOpenCleanLink() {
     return;
   }
 
+  const settings = readAdminFormSettings();
+  if (!settings) {
+    setAdminStatus("Bitte gültigen Zahlungslink mit https:// eintragen.");
+    return;
+  }
+
   const saved = await applyStoreAndPublishTimerRules(
     rules,
     "Gespeichert. Die Hauptseite ist aktualisiert.",
-    "Auf diesem Gerät gespeichert. Live konnte nicht aktualisiert werden."
+    "Auf diesem Gerät gespeichert. Live konnte nicht aktualisiert werden.",
+    settings
   );
   if (!saved) {
     return;
@@ -536,14 +639,21 @@ async function applyRulesDirectlyLive() {
     return;
   }
 
+  const nextSettings = readAdminFormSettings();
+  if (!nextSettings) {
+    setAdminStatus("Bitte gültigen Zahlungslink mit https:// eintragen.");
+    return;
+  }
+
   const campaignUrl = buildCampaignUrl(nextRules);
   setAdminLinkValue(campaignUrl);
   await applyStoreAndPublishTimerRules(
     nextRules,
     nextRules.manualLock
-      ? "Live gespeichert: Seite ist dauerhaft geschlossen."
-      : `Live gespeichert: Besucher sehen jetzt ${nextRules.openSlots}/${nextRules.totalSlots} Plätze.`,
-    `Gespeichert auf diesem Gerät: ${nextRules.openSlots}/${nextRules.totalSlots}. Live konnte nicht aktualisiert werden.`
+      ? "Live gespeichert: Seite ist dauerhaft geschlossen. Zahlungslink ist aktualisiert."
+      : `Live gespeichert: ${nextRules.openSlots}/${nextRules.totalSlots} Plätze und Zahlungslink aktualisiert.`,
+    `Gespeichert auf diesem Gerät: ${nextRules.openSlots}/${nextRules.totalSlots}. Live konnte nicht aktualisiert werden.`,
+    nextSettings
   );
 }
 
@@ -554,18 +664,28 @@ async function copyHomeLinkAndSaveRules() {
     return;
   }
 
+  const settings = readAdminFormSettings();
+  if (!settings) {
+    setAdminStatus("Bitte gültigen Zahlungslink mit https:// eintragen.");
+    return;
+  }
+
   if (!applyAndStoreTimerRules(rules, "Hauptlink wird vorbereitet.")) {
     return;
   }
+  applySettings(settings);
+  storeAdminSettings(settings);
 
   const cleanUrl = buildCleanPublicUrl();
   const copied = await copyText(cleanUrl);
   setAdminStatus(copied ? "Hauptlink kopiert. Speichere Einstellungen..." : `Hauptlink steht im Feld: ${cleanUrl}`);
 
-  const result = await publishGlobalRules(getCurrentTimerRules());
+  const result = await publishGlobalConfig(getCurrentTimerRules(), getCurrentSettings());
   if (result.saved) {
     applyTimerRules(result.rules);
+    applySettings(result.settings);
     storeAdminRules(result.rules);
+    storeAdminSettings(result.settings);
   }
 
   setAdminStatus(
@@ -575,6 +695,30 @@ async function copyHomeLinkAndSaveRules() {
         ? "Hauptlink kopiert. Einstellungen gelten aktuell auf deinem Gerät."
         : `Hauptlink steht im Feld. Einstellungen gelten aktuell auf deinem Gerät.`
   );
+}
+
+async function savePaymentLinkDirectlyLive() {
+  const settings = readAdminFormSettings();
+  if (!settings) {
+    setAdminStatus("Bitte gültigen Zahlungslink mit https:// eintragen.");
+    return;
+  }
+
+  applySettings(settings);
+  storeAdminSettings(settings);
+  setAdminStatus("Zahlungslink wird live gespeichert...");
+
+  const result = await publishGlobalConfig(getCurrentTimerRules(), getCurrentSettings());
+  if (result.saved) {
+    applyTimerRules(result.rules);
+    applySettings(result.settings);
+    storeAdminRules(result.rules);
+    storeAdminSettings(result.settings);
+    setAdminStatus("Zahlungslink live gespeichert. Alle Unlock-Buttons nutzen ihn jetzt.");
+    return;
+  }
+
+  setAdminStatus("Zahlungslink lokal gespeichert. Live konnte nicht aktualisiert werden.");
 }
 
 function formatTime(ms) {
@@ -650,7 +794,7 @@ function goToUnlock() {
     return;
   }
 
-  showToast("Unlock-Link noch in app.js eintragen. Danach führt jeder gesperrte Bereich direkt weiter.");
+  showToast("Zahlungslink im Admin prüfen. Danach führt jeder Unlock-Button direkt weiter.");
 }
 
 function setupAdminPanel() {
@@ -669,9 +813,17 @@ function setupAdminPanel() {
       return;
     }
 
+    const settings = readAdminFormSettings();
+    if (!settings) {
+      setAdminStatus("Bitte gültigen Zahlungslink mit https:// eintragen.");
+      return;
+    }
+
     applyTimerRules(rules);
+    applySettings(settings);
     storeAdminRules(rules);
-    setAdminStatus("Gespeichert. Nutze unten Live speichern oder Link kopieren.");
+    storeAdminSettings(settings);
+    setAdminStatus("Lokal gespeichert. Nutze unten Live speichern oder Zahlungslink speichern.");
   });
 
   adminNow?.addEventListener("click", () => {
@@ -711,18 +863,22 @@ function setupAdminPanel() {
   });
 
   adminApplyLive?.addEventListener("click", applyRulesDirectlyLive);
+  adminSavePaymentLink?.addEventListener("click", savePaymentLinkDirectlyLive);
   adminCopyHome?.addEventListener("click", copyHomeLinkAndSaveRules);
   adminApplyClean?.addEventListener("click", applyRulesAndOpenCleanLink);
 
   adminReset?.addEventListener("click", () => {
     try {
       window.localStorage.removeItem(ADMIN_STORAGE_KEY);
+      window.localStorage.removeItem(ADMIN_SETTINGS_STORAGE_KEY);
     } catch {
       // Ignore storage failures; reset still works for the current page.
     }
 
     applyTimerRules(DEFAULT_CONFIG);
-    storeAdminRules(DEFAULT_CONFIG);
+    applySettings(DEFAULT_CONFIG);
+    storeAdminRules(getCurrentTimerRules());
+    storeAdminSettings(getCurrentSettings());
     setAdminStatus("Standard lokal gesetzt. Nutze Live speichern, wenn das online gelten soll.");
   });
 
@@ -746,11 +902,16 @@ function setupAdminPanel() {
 
 async function initializePage() {
   const campaignRules = readCampaignRules();
-  const globalRules = campaignRules ? null : await readGlobalRules();
-  const initialRules = campaignRules || globalRules || readStoredAdminRules();
+  const globalConfig = campaignRules ? null : await readGlobalConfig();
+  const initialRules = campaignRules || globalConfig?.rules || readStoredAdminRules();
+  const initialSettings = globalConfig?.settings || readStoredAdminSettings();
 
   if (initialRules) {
     applyTimerRules(initialRules);
+  }
+
+  if (initialSettings) {
+    applySettings(initialSettings);
   }
 
   Object.entries(CONFIG).forEach(([key, value]) => setText(key, value));

@@ -6,6 +6,7 @@ const PORT = Number(process.env.PORT || 8183);
 const HOST = process.env.HOST || "0.0.0.0";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "123s";
 const CANONICAL_RENDER_HOST = "jane-whatsapp.onrender.com";
+const DEFAULT_PAYMENT_URL = "https://buy.stripe.com/dRm28t8i1aoU62E3gaasg03";
 
 const DEFAULT_RULES = Object.freeze({
   offerDurationMs: 3 * 60 * 1000,
@@ -14,6 +15,10 @@ const DEFAULT_RULES = Object.freeze({
   openSlots: 13,
   totalSlots: 30,
   manualLock: false,
+});
+
+const DEFAULT_SETTINGS = Object.freeze({
+  unlockUrl: DEFAULT_PAYMENT_URL,
 });
 
 const MIME_TYPES = {
@@ -58,6 +63,30 @@ function normalizeRules(rawRules) {
   };
 }
 
+function normalizePaymentUrl(value) {
+  const candidate = String(value || "").trim();
+  if (!candidate) return "";
+
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "https:") return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function normalizeSettings(rawSettings, fallbackSettings = DEFAULT_SETTINGS) {
+  const source = rawSettings && typeof rawSettings === "object" ? rawSettings : {};
+  const unlockUrl = normalizePaymentUrl(source.unlockUrl || fallbackSettings.unlockUrl);
+
+  if (!unlockUrl) return null;
+
+  return {
+    unlockUrl,
+  };
+}
+
 function resolveDataDir() {
   const candidates = [
     process.env.DATA_DIR,
@@ -84,9 +113,11 @@ function readConfigRecord() {
   try {
     const record = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
     const rules = normalizeRules(record.rules);
-    if (rules) {
+    const settings = normalizeSettings(record.settings);
+    if (rules && settings) {
       return {
         rules,
+        settings,
         updatedAt: record.updatedAt || null,
       };
     }
@@ -96,16 +127,20 @@ function readConfigRecord() {
 
   return {
     rules: { ...DEFAULT_RULES },
+    settings: { ...DEFAULT_SETTINGS },
     updatedAt: null,
   };
 }
 
-function writeConfigRecord(rules) {
-  const normalizedRules = normalizeRules(rules);
-  if (!normalizedRules) return null;
+function writeConfigRecord(nextRecord) {
+  const currentRecord = readConfigRecord();
+  const normalizedRules = normalizeRules(nextRecord.rules || currentRecord.rules);
+  const normalizedSettings = normalizeSettings(nextRecord.settings || currentRecord.settings);
+  if (!normalizedRules || !normalizedSettings) return null;
 
   const record = {
     rules: normalizedRules,
+    settings: normalizedSettings,
     updatedAt: new Date().toISOString(),
   };
 
@@ -193,9 +228,12 @@ async function handleConfigApi(request, response) {
     return;
   }
 
-  const record = writeConfigRecord(payload.rules);
+  const record = writeConfigRecord({
+    rules: payload.rules,
+    settings: payload.settings,
+  });
   if (!record) {
-    sendJson(response, 400, { error: "invalid_rules" });
+    sendJson(response, 400, { error: "invalid_config" });
     return;
   }
 
@@ -243,7 +281,7 @@ const server = http.createServer((request, response) => {
   if (requestPath === "/api/health") {
     sendJson(response, 200, {
       ok: true,
-      service: "jane-whatsapp-premium",
+      service: "jane-whatsapp",
     });
     return;
   }
