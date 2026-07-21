@@ -6,7 +6,7 @@ const DEFAULT_CONFIG = Object.freeze({
   videos: 3,
   price: "CHF 16.-",
   oldPrice: "CHF 29.-",
-  unlockUrl: "https://buy.stripe.com/dRm28t8i1aoU62E3gaasg03",
+  unlockUrl: "",
   offerDurationMs: 3 * 60 * 1000,
   lockDurationMs: 3 * 60 * 1000,
   timerEpochMs: Date.UTC(2026, 6, 15, 0, 0, 0),
@@ -158,8 +158,9 @@ function normalizeTimerRules(rawRules) {
 function normalizeSettings(rawSettings) {
   if (!rawSettings || typeof rawSettings !== "object") return null;
 
-  const unlockUrl = normalizePaymentUrl(rawSettings.unlockUrl);
-  if (!unlockUrl) return null;
+  const candidate = String(rawSettings.unlockUrl || "").trim();
+  const unlockUrl = normalizePaymentUrl(candidate);
+  if (candidate && !unlockUrl) return null;
 
   return {
     unlockUrl,
@@ -714,11 +715,19 @@ async function savePaymentLinkDirectlyLive() {
     applySettings(result.settings);
     storeAdminRules(result.rules);
     storeAdminSettings(result.settings);
-    setAdminStatus("Zahlungslink live gespeichert. Alle Unlock-Buttons nutzen ihn jetzt.");
+    setAdminStatus(
+      result.settings.unlockUrl
+        ? "Zahlungslink live gespeichert. Alle Unlock-Buttons nutzen ihn jetzt."
+        : "Zahlungslink live entfernt. Unlock-Buttons öffnen keinen Zahlungslink."
+    );
     return;
   }
 
-  setAdminStatus("Zahlungslink lokal gespeichert. Live konnte nicht aktualisiert werden.");
+  setAdminStatus(
+    getCurrentSettings().unlockUrl
+      ? "Zahlungslink lokal gespeichert. Live konnte nicht aktualisiert werden."
+      : "Zahlungslink lokal entfernt. Live konnte nicht aktualisiert werden."
+  );
 }
 
 function formatTime(ms) {

@@ -6,7 +6,6 @@ const PORT = Number(process.env.PORT || 8183);
 const HOST = process.env.HOST || "0.0.0.0";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "123s";
 const CANONICAL_RENDER_HOST = "jane-whatsapp.onrender.com";
-const DEFAULT_PAYMENT_URL = "https://buy.stripe.com/dRm28t8i1aoU62E3gaasg03";
 
 const DEFAULT_RULES = Object.freeze({
   offerDurationMs: 3 * 60 * 1000,
@@ -18,7 +17,7 @@ const DEFAULT_RULES = Object.freeze({
 });
 
 const DEFAULT_SETTINGS = Object.freeze({
-  unlockUrl: DEFAULT_PAYMENT_URL,
+  unlockUrl: "",
 });
 
 const MIME_TYPES = {
@@ -78,9 +77,13 @@ function normalizePaymentUrl(value) {
 
 function normalizeSettings(rawSettings, fallbackSettings = DEFAULT_SETTINGS) {
   const source = rawSettings && typeof rawSettings === "object" ? rawSettings : {};
-  const unlockUrl = normalizePaymentUrl(source.unlockUrl || fallbackSettings.unlockUrl);
+  const rawUnlockUrl = Object.prototype.hasOwnProperty.call(source, "unlockUrl")
+    ? source.unlockUrl
+    : fallbackSettings.unlockUrl;
+  const candidate = String(rawUnlockUrl || "").trim();
+  const unlockUrl = normalizePaymentUrl(candidate);
 
-  if (!unlockUrl) return null;
+  if (candidate && !unlockUrl) return null;
 
   return {
     unlockUrl,
